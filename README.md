@@ -405,7 +405,7 @@ dep-map/
 
 MIT License
 
-## �� 贡献
+## 如何贡献
 
 欢迎提交 Issue 和 Pull Request！
 
