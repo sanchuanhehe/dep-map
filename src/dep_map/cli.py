@@ -271,19 +271,46 @@ def rdeps(package: str, aports: Optional[str], recursive: bool, depth: int):
 @click.option("--depth", "-d", default=3, help="最大深度")
 @click.option("--format", "-f", "fmt", type=click.Choice(["graph", "tree", "d3"]), default="graph")
 @click.option("--include-reverse", "-r", is_flag=True, help="包含反向依赖")
-def visualize(package: str, aports: Optional[str], output: str, depth: int, fmt: str, include_reverse: bool):
-    """生成依赖关系可视化图"""
+@click.option("--type", "-t", "dep_type", type=click.Choice(["runtime", "build", "all"]), default="runtime", 
+              help="依赖类型 (默认: runtime)")
+@click.option("--show-all-types", is_flag=True, help="显示所有依赖类型（用不同样式区分）")
+def visualize(package: str, aports: Optional[str], output: str, depth: int, fmt: str, 
+              include_reverse: bool, dep_type: str, show_all_types: bool):
+    """生成依赖关系可视化图
+    
+    默认只显示运行时依赖 (runtime)，使用 --show-all-types 可以显示所有类型。
+    不同依赖类型用不同线条样式区分：
+    
+    \b
+    - Runtime (运行时): 绿色实线
+    - Build (构建):    蓝色虚线  
+    - Check (检查):    橙色点线
+    """
     graph = load_or_scan(aports)
     
     if package not in graph.packages:
         console.print(f"[red]Error:[/red] Package '{package}' not found")
         sys.exit(1)
     
+    # 转换依赖类型
+    dtype_map = {
+        "runtime": DependencyType.RUNTIME,
+        "build": DependencyType.BUILD,
+        "all": DependencyType.ALL,
+    }
+    dtype = dtype_map[dep_type]
+    
     viz = Visualizer(graph)
     
     with console.status(f"Generating visualization for {package}..."):
         if fmt == "graph":
-            viz.render_html(package, output, max_depth=depth, include_reverse=include_reverse)
+            viz.render_html(
+                package, output, 
+                dep_type=dtype,
+                max_depth=depth, 
+                include_reverse=include_reverse,
+                show_all_types=show_all_types
+            )
         elif fmt == "tree":
             viz.render_tree_html(package, output, max_depth=depth)
         elif fmt == "d3":

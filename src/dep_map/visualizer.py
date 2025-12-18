@@ -2,11 +2,12 @@
 依赖关系可视化模块
 
 生成交互式依赖关系图。
+支持按依赖类型过滤和不同样式显示。
 """
 
 import json
 import os
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Set
 from pathlib import Path
 
 from .graph import DependencyGraph, DependencyType
@@ -15,7 +16,7 @@ from .graph import DependencyGraph, DependencyType
 class Visualizer:
     """依赖关系可视化器"""
     
-    # 节点颜色配置
+    # 节点颜色配置（按仓库）
     REPO_COLORS = {
         "main": "#4CAF50",       # 绿色
         "community": "#2196F3",  # 蓝色
@@ -24,10 +25,23 @@ class Visualizer:
         "unknown": "#E0E0E0",    # 浅灰
     }
     
-    DEP_TYPE_COLORS = {
-        "runtime": "#4CAF50",    # 绿色
-        "build": "#2196F3",      # 蓝色
-        "check": "#FF9800",      # 橙色
+    # 边颜色配置（按依赖类型）
+    EDGE_STYLES = {
+        "runtime": {
+            "color": "#4CAF50",      # 绿色 - 运行时依赖
+            "dashes": False,         # 实线
+            "width": 2,
+        },
+        "build": {
+            "color": "#2196F3",      # 蓝色 - 构建依赖
+            "dashes": [5, 5],        # 虚线
+            "width": 1.5,
+        },
+        "check": {
+            "color": "#FF9800",      # 橙色 - 检查依赖
+            "dashes": [2, 2],        # 点线
+            "width": 1,
+        },
     }
     
     def __init__(self, graph: DependencyGraph):
@@ -43,9 +57,10 @@ class Visualizer:
         self,
         package: str,
         output_path: str,
-        dep_type: DependencyType = DependencyType.ALL,
+        dep_type: DependencyType = DependencyType.RUNTIME,  # 默认只显示运行时依赖
         max_depth: int = 3,
         include_reverse: bool = False,
+        show_all_types: bool = False,  # 是否显示所有类型（用不同样式区分）
         title: Optional[str] = None
     ):
         """
@@ -54,13 +69,64 @@ class Visualizer:
         Args:
             package: 中心软件包
             output_path: 输出文件路径
-            dep_type: 依赖类型
+            dep_type: 依赖类型（默认只显示运行时依赖）
             max_depth: 最大深度
             include_reverse: 是否包含反向依赖
+            show_all_types: 是否显示所有依赖类型（用不同样式区分）
             title: 页面标题
         """
-        # 收集需要显示的节点
+        if show_all_types:
+            # 收集所有类型的依赖，用不同样式显示
+            nodes_to_show, edges_data = self._collect_all_dep_types(
+                package, max_depth, include_reverse
+            )
+        else:
+            # 只收集指定类型的依赖
+            nodes_to_show, edges_data = self._collect_single_dep_type(
+                package, dep_type, max_depth, include_reverse
+            )
+        
+        # 构建节点数据
+        nodes_data = []
+        for node in nodes_to_show:
+            pkg_info = self.graph.packages.get(node)
+            repo = pkg_info.repo if pkg_info else "unknown"
+            
+            node_data = {
+                "id": node,
+                "label": node,
+                "color": self.REPO_COLORS.get(repo, self.REPO_COLORS["unknown"]),
+                "size": 30 if node == package else 20,
+                "font": {"size": 14 if node == package else 12},
+            }
+            
+            if pkg_info:
+                node_data["title"] = self._make_tooltip(pkg_info)
+            
+            nodes_data.append(node_data)
+        
+        # 生成 HTML（带过滤器控制）
+        html_content = self._generate_filterable_html(
+            nodes_data, 
+            edges_data,
+            package=package,
+            title=title or f"Dependency Graph: {package}",
+            show_all_types=show_all_types
+        )
+        
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(html_content)
+    
+    def _collect_single_dep_type(
+        self, 
+        package: str, 
+        dep_type: DependencyType,
+        max_depth: int,
+        include_reverse: bool
+    ) -> tuple:
+        """收集单一类型的依赖"""
         nodes_to_show = {package}
+        edges_data = []
         
         # 添加依赖
         deps = self.graph.get_dependencies(
@@ -81,26 +147,16 @@ class Visualizer:
             )
             nodes_to_show.update(rdeps)
         
-        # 构建节点和边数据
-        nodes_data = []
-        edges_data = []
-        
-        for node in nodes_to_show:
-            pkg_info = self.graph.packages.get(node)
-            repo = pkg_info.repo if pkg_info else "unknown"
-            
-            node_data = {
-                "id": node,
-                "label": node,
-                "color": self.REPO_COLORS.get(repo, self.REPO_COLORS["unknown"]),
-                "size": 30 if node == package else 20,
-                "font": {"size": 14 if node == package else 12},
-            }
-            
-            if pkg_info:
-                node_data["title"] = self._make_tooltip(pkg_info)
-            
-            nodes_data.append(node_data)
+        # 确定边的样式
+        if dep_type == DependencyType.RUNTIME:
+            edge_style = self.EDGE_STYLES["runtime"]
+            edge_type = "runtime"
+        elif dep_type == DependencyType.BUILD:
+            edge_style = self.EDGE_STYLES["build"]
+            edge_type = "build"
+        else:
+            edge_style = self.EDGE_STYLES["runtime"]
+            edge_type = "runtime"
         
         # 添加边
         for node in nodes_to_show:
@@ -110,18 +166,518 @@ class Visualizer:
                         "from": node,
                         "to": dep,
                         "arrows": "to",
-                        "color": {"color": "#888888", "opacity": 0.6},
+                        "color": {"color": edge_style["color"], "opacity": 0.8},
+                        "dashes": edge_style["dashes"],
+                        "width": edge_style["width"],
+                        "depType": edge_type,
                     })
         
-        # 生成 HTML
-        html_content = self._generate_visjs_html(
-            nodes_data, 
-            edges_data,
-            title=title or f"Dependency Graph: {package}"
-        )
+        return nodes_to_show, edges_data
+    
+    def _collect_all_dep_types(
+        self,
+        package: str,
+        max_depth: int,
+        include_reverse: bool
+    ) -> tuple:
+        """收集所有类型的依赖，用不同样式区分"""
+        nodes_to_show = {package}
+        edges_data = []
+        edge_set = set()  # 避免重复边
         
-        with open(output_path, 'w', encoding='utf-8') as f:
-            f.write(html_content)
+        pkg_info = self.graph.packages.get(package)
+        if not pkg_info:
+            return nodes_to_show, edges_data
+        
+        # 递归收集依赖
+        def collect_deps_recursive(pkg_name: str, current_depth: int, visited: Set[str]):
+            if current_depth > max_depth or pkg_name in visited:
+                return
+            visited.add(pkg_name)
+            
+            pkg = self.graph.packages.get(pkg_name)
+            if not pkg:
+                return
+            
+            # 运行时依赖
+            for dep in pkg.depends:
+                if dep in self.graph.packages:
+                    nodes_to_show.add(dep)
+                    edge_key = (pkg_name, dep, "runtime")
+                    if edge_key not in edge_set:
+                        edge_set.add(edge_key)
+                        style = self.EDGE_STYLES["runtime"]
+                        edges_data.append({
+                            "from": pkg_name,
+                            "to": dep,
+                            "arrows": "to",
+                            "color": {"color": style["color"], "opacity": 0.8},
+                            "dashes": style["dashes"],
+                            "width": style["width"],
+                            "depType": "runtime",
+                        })
+                    collect_deps_recursive(dep, current_depth + 1, visited.copy())
+            
+            # 构建依赖
+            for dep in pkg.build_depends:
+                if dep in self.graph.packages:
+                    nodes_to_show.add(dep)
+                    edge_key = (pkg_name, dep, "build")
+                    if edge_key not in edge_set:
+                        edge_set.add(edge_key)
+                        style = self.EDGE_STYLES["build"]
+                        edges_data.append({
+                            "from": pkg_name,
+                            "to": dep,
+                            "arrows": "to",
+                            "color": {"color": style["color"], "opacity": 0.6},
+                            "dashes": style["dashes"],
+                            "width": style["width"],
+                            "depType": "build",
+                        })
+                    collect_deps_recursive(dep, current_depth + 1, visited.copy())
+            
+            # 检查依赖
+            for dep in pkg.checkdepends:
+                if dep in self.graph.packages:
+                    nodes_to_show.add(dep)
+                    edge_key = (pkg_name, dep, "check")
+                    if edge_key not in edge_set:
+                        edge_set.add(edge_key)
+                        style = self.EDGE_STYLES["check"]
+                        edges_data.append({
+                            "from": pkg_name,
+                            "to": dep,
+                            "arrows": "to",
+                            "color": {"color": style["color"], "opacity": 0.5},
+                            "dashes": style["dashes"],
+                            "width": style["width"],
+                            "depType": "check",
+                        })
+                    collect_deps_recursive(dep, current_depth + 1, visited.copy())
+        
+        collect_deps_recursive(package, 0, set())
+        
+        return nodes_to_show, edges_data
+    
+    def _generate_filterable_html(
+        self,
+        nodes: List[dict],
+        edges: List[dict],
+        package: str,
+        title: str,
+        show_all_types: bool = False
+    ) -> str:
+        """生成带依赖类型过滤器的 HTML"""
+        return f'''<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>{title}</title>
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+        }}
+        #header {{
+            background: #16213e;
+            padding: 12px 20px;
+            border-bottom: 1px solid #0f3460;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }}
+        #header h1 {{
+            font-size: 1.3rem;
+            font-weight: 500;
+        }}
+        #filter-controls {{
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }}
+        .filter-group {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }}
+        .filter-group label {{
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            cursor: pointer;
+            padding: 5px 10px;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }}
+        .filter-group label:hover {{
+            background: rgba(255,255,255,0.1);
+        }}
+        .filter-group input[type="checkbox"] {{
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+        }}
+        .dep-indicator {{
+            display: inline-block;
+            width: 20px;
+            height: 3px;
+            margin-right: 5px;
+        }}
+        .dep-runtime {{ background: #4CAF50; }}
+        .dep-build {{ background: #2196F3; background: repeating-linear-gradient(90deg, #2196F3 0px, #2196F3 5px, transparent 5px, transparent 10px); }}
+        .dep-check {{ background: #FF9800; background: repeating-linear-gradient(90deg, #FF9800 0px, #FF9800 2px, transparent 2px, transparent 4px); }}
+        #container {{
+            display: flex;
+            height: calc(100vh - 55px);
+        }}
+        #network {{
+            flex: 1;
+            background: #1a1a2e;
+        }}
+        #sidebar {{
+            width: 280px;
+            background: #16213e;
+            padding: 15px;
+            overflow-y: auto;
+            border-left: 1px solid #0f3460;
+        }}
+        #sidebar h3 {{
+            margin-bottom: 10px;
+            color: #e94560;
+            font-size: 1rem;
+        }}
+        #search-box {{
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 15px;
+            background: #1a1a2e;
+            border: 1px solid #0f3460;
+            color: #eee;
+            border-radius: 4px;
+        }}
+        #search-box:focus {{
+            outline: none;
+            border-color: #e94560;
+        }}
+        #info {{
+            font-size: 0.85rem;
+            line-height: 1.5;
+        }}
+        #info p {{
+            margin: 6px 0;
+        }}
+        #info .label {{
+            color: #888;
+        }}
+        #legend {{
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #0f3460;
+        }}
+        .legend-item {{
+            display: flex;
+            align-items: center;
+            margin: 8px 0;
+            font-size: 0.85rem;
+        }}
+        .legend-color {{
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }}
+        .legend-line {{
+            width: 30px;
+            height: 3px;
+            margin-right: 8px;
+        }}
+        #stats {{
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #0f3460;
+            font-size: 0.85rem;
+        }}
+        #stats p {{
+            margin: 5px 0;
+            color: #888;
+        }}
+        #stats span {{
+            color: #eee;
+        }}
+        button {{
+            background: #e94560;
+            color: white;
+            border: none;
+            padding: 8px 14px;
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            margin: 4px 4px 4px 0;
+        }}
+        button:hover {{
+            background: #ff6b6b;
+        }}
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h1>{title}</h1>
+        <div id="filter-controls">
+            <span style="color: #888;">Filter:</span>
+            <div class="filter-group">
+                <label>
+                    <input type="checkbox" id="filter-runtime" checked>
+                    <span class="dep-indicator dep-runtime"></span>
+                    Runtime
+                </label>
+                <label>
+                    <input type="checkbox" id="filter-build">
+                    <span class="dep-indicator dep-build"></span>
+                    Build
+                </label>
+                <label>
+                    <input type="checkbox" id="filter-check">
+                    <span class="dep-indicator dep-check"></span>
+                    Check
+                </label>
+            </div>
+        </div>
+    </div>
+    <div id="container">
+        <div id="network"></div>
+        <div id="sidebar">
+            <h3>🔍 Search</h3>
+            <input type="text" id="search-box" placeholder="Type package name...">
+            
+            <h3>📦 Package Info</h3>
+            <div id="info">
+                <p><em>Click on a node to see details</em></p>
+            </div>
+            
+            <div id="legend">
+                <h3>📊 Legend</h3>
+                <p style="font-size: 0.8rem; color: #888; margin-bottom: 8px;">Node (by repo):</p>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #4CAF50;"></div>
+                    <span>main</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #2196F3;"></div>
+                    <span>community</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #FF9800;"></div>
+                    <span>testing</span>
+                </div>
+                <p style="font-size: 0.8rem; color: #888; margin: 12px 0 8px;">Edge (by dep type):</p>
+                <div class="legend-item">
+                    <div class="legend-line" style="background: #4CAF50;"></div>
+                    <span>Runtime (solid)</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-line" style="background: repeating-linear-gradient(90deg, #2196F3 0px, #2196F3 5px, transparent 5px, transparent 10px);"></div>
+                    <span>Build (dashed)</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-line" style="background: repeating-linear-gradient(90deg, #FF9800 0px, #FF9800 2px, transparent 2px, transparent 4px);"></div>
+                    <span>Check (dotted)</span>
+                </div>
+            </div>
+            
+            <div id="stats">
+                <h3>📈 Statistics</h3>
+                <p>Nodes: <span id="node-count">0</span></p>
+                <p>Edges: <span id="edge-count">0</span></p>
+                <p>Runtime: <span id="runtime-count">0</span></p>
+                <p>Build: <span id="build-count">0</span></p>
+                <p>Check: <span id="check-count">0</span></p>
+            </div>
+            
+            <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #0f3460;">
+                <button onclick="network.fit()">Fit View</button>
+                <button onclick="focusCenter()">Center</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // 原始数据
+        const allNodes = {json.dumps(nodes, ensure_ascii=False)};
+        const allEdges = {json.dumps(edges, ensure_ascii=False)};
+        const centerPackage = "{package}";
+        
+        // 当前显示的数据
+        const nodes = new vis.DataSet(allNodes);
+        const edges = new vis.DataSet([]);
+        
+        const container = document.getElementById('network');
+        const data = {{ nodes: nodes, edges: edges }};
+        
+        const options = {{
+            nodes: {{
+                shape: 'dot',
+                font: {{
+                    color: '#ffffff'
+                }}
+            }},
+            edges: {{
+                smooth: {{
+                    type: 'continuous'
+                }}
+            }},
+            physics: {{
+                barnesHut: {{
+                    gravitationalConstant: -3000,
+                    centralGravity: 0.3,
+                    springLength: 120,
+                    springConstant: 0.04,
+                    damping: 0.5
+                }},
+                stabilization: {{
+                    iterations: 150
+                }}
+            }},
+            interaction: {{
+                hover: true,
+                tooltipDelay: 200
+            }}
+        }};
+        
+        const network = new vis.Network(container, data, options);
+        
+        // 过滤器状态
+        let filters = {{
+            runtime: true,
+            build: false,
+            check: false
+        }};
+        
+        // 更新显示的边
+        function updateEdges() {{
+            const filteredEdges = allEdges.filter(edge => {{
+                if (edge.depType === 'runtime' && filters.runtime) return true;
+                if (edge.depType === 'build' && filters.build) return true;
+                if (edge.depType === 'check' && filters.check) return true;
+                return false;
+            }});
+            
+            // 找出需要显示的节点
+            const connectedNodes = new Set([centerPackage]);
+            filteredEdges.forEach(edge => {{
+                connectedNodes.add(edge.from);
+                connectedNodes.add(edge.to);
+            }});
+            
+            // 更新节点可见性
+            allNodes.forEach(node => {{
+                const isVisible = connectedNodes.has(node.id);
+                nodes.update({{
+                    id: node.id,
+                    hidden: !isVisible
+                }});
+            }});
+            
+            // 更新边
+            edges.clear();
+            edges.add(filteredEdges);
+            
+            // 更新统计
+            updateStats(filteredEdges);
+        }}
+        
+        function updateStats(filteredEdges) {{
+            const visibleNodes = allNodes.filter(n => !nodes.get(n.id)?.hidden).length;
+            document.getElementById('node-count').textContent = visibleNodes;
+            document.getElementById('edge-count').textContent = filteredEdges.length;
+            document.getElementById('runtime-count').textContent = 
+                filteredEdges.filter(e => e.depType === 'runtime').length;
+            document.getElementById('build-count').textContent = 
+                filteredEdges.filter(e => e.depType === 'build').length;
+            document.getElementById('check-count').textContent = 
+                filteredEdges.filter(e => e.depType === 'check').length;
+        }}
+        
+        // 过滤器事件
+        document.getElementById('filter-runtime').addEventListener('change', function() {{
+            filters.runtime = this.checked;
+            updateEdges();
+        }});
+        document.getElementById('filter-build').addEventListener('change', function() {{
+            filters.build = this.checked;
+            updateEdges();
+        }});
+        document.getElementById('filter-check').addEventListener('change', function() {{
+            filters.check = this.checked;
+            updateEdges();
+        }});
+        
+        // 初始化显示
+        updateEdges();
+        
+        // 点击节点显示信息
+        network.on('click', function(params) {{
+            if (params.nodes.length > 0) {{
+                const nodeId = params.nodes[0];
+                const node = nodes.get(nodeId);
+                if (node && node.title) {{
+                    document.getElementById('info').innerHTML = node.title;
+                }} else {{
+                    document.getElementById('info').innerHTML = `<p><strong>${{nodeId}}</strong></p>`;
+                }}
+            }}
+        }});
+        
+        // 搜索功能
+        const searchBox = document.getElementById('search-box');
+        searchBox.addEventListener('input', function(e) {{
+            const query = e.target.value.toLowerCase();
+            if (query.length >= 2) {{
+                const matchingNodes = allNodes.filter(n => 
+                    n.id.toLowerCase().includes(query) && !nodes.get(n.id)?.hidden
+                );
+                if (matchingNodes.length > 0 && matchingNodes.length <= 10) {{
+                    network.selectNodes(matchingNodes.map(n => n.id));
+                    if (matchingNodes.length === 1) {{
+                        network.focus(matchingNodes[0].id, {{
+                            scale: 1.5,
+                            animation: true
+                        }});
+                    }}
+                }}
+            }}
+        }});
+        
+        searchBox.addEventListener('keydown', function(e) {{
+            if (e.key === 'Enter') {{
+                const query = e.target.value.toLowerCase();
+                const exactMatch = allNodes.find(n => n.id.toLowerCase() === query);
+                if (exactMatch && !nodes.get(exactMatch.id)?.hidden) {{
+                    network.selectNodes([exactMatch.id]);
+                    network.focus(exactMatch.id, {{
+                        scale: 2,
+                        animation: true
+                    }});
+                }}
+            }}
+        }});
+        
+        function focusCenter() {{
+            network.focus(centerPackage, {{
+                scale: 1.2,
+                animation: true
+            }});
+        }}
+    </script>
+</body>
+</html>'''
     
     def render_d3_html(
         self,
