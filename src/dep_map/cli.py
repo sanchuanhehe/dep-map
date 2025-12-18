@@ -324,9 +324,31 @@ def visualize(package: str, aports: Optional[str], output: str, depth: int, fmt:
 @click.option("--aports", "-a", type=click.Path(exists=True), help="aports 仓库路径")
 @click.option("--output", "-o", type=click.Path(), help="输出 HTML 文件路径")
 @click.option("--max-nodes", "-n", default=300, help="最大节点数 (仅当不使用 --all 时)")
-@click.option("--all", "show_all", is_flag=True, help="显示所有节点（完整依赖图）")
+@click.option("--all", "show_all", is_flag=True, help="显示所有节点（完整依赖图，可在 HTML 中过滤）")
 def overview(aports: Optional[str], output: Optional[str], max_nodes: int, show_all: bool):
-    """生成完整依赖图概览"""
+    """生成完整依赖图概览
+    
+    生成的 HTML 文件包含交互式过滤器，可以在浏览器中动态过滤：
+    
+    \b
+    节点过滤选项（侧边栏）：
+    - Root Package:  输入包名查看其依赖子树
+    - Min Reverse Deps: 过滤掉被依赖数少于此值的包
+    - Min Dependencies: 过滤掉依赖数少于此值的包
+    - Repository:    只显示指定仓库的包
+    - Hide orphans:  隐藏孤立包（无依赖且不被依赖）
+    
+    \b
+    边过滤选项（顶部）：
+    - Runtime: 显示运行时依赖（绿色实线）
+    - Build:   显示构建依赖（蓝色虚线）
+    - Check:   显示检查依赖（橙色点线）
+    
+    \b
+    示例：
+    dep-map overview --all -o full-graph.html   # 生成完整图
+    dep-map overview -n 500 -o top500.html      # 只取前 500 个节点
+    """
     graph = load_or_scan(aports)
     
     output_path = output or "dependency-overview.html"
@@ -335,14 +357,24 @@ def overview(aports: Optional[str], output: Optional[str], max_nodes: int, show_
     
     if show_all:
         total = len(graph.packages)
-        console.print(f"[yellow]Generating complete graph with all {total} packages...[/yellow]")
-        console.print("[dim]This may take a while and the resulting file may be large.[/dim]")
+        console.print(f"[yellow]Generating full graph with {total} packages...[/yellow]")
+        console.print("[dim]Tip: Use filters in the HTML sidebar to narrow down the view[/dim]")
         
-        with console.status("Generating complete graph..."):
-            viz.render_complete_graph_html(output_path, title=f"Complete Alpine Dependency Graph ({total} packages)")
+        with console.status("Generating graph..."):
+            viz.render_full_graph_html(
+                output_path, 
+                max_nodes=total,
+                dep_type=DependencyType.ALL,
+                show_all_types=True
+            )
     else:
         with console.status("Generating overview..."):
-            viz.render_full_graph_html(output_path, max_nodes=max_nodes)
+            viz.render_full_graph_html(
+                output_path, 
+                max_nodes=max_nodes,
+                dep_type=DependencyType.ALL,
+                show_all_types=True
+            )
     
     console.print(f"[green]✓[/green] Generated {output_path}")
     console.print(f"[dim]Open in browser: file://{os.path.abspath(output_path)}[/dim]")
