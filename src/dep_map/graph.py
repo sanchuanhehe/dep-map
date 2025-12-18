@@ -326,7 +326,8 @@ class DependencyGraph:
             return None
 
         try:
-            return nx.shortest_path(self._graph, source, target)
+            path: list[str] = nx.shortest_path(self._graph, source, target)
+            return path
         except nx.NetworkXNoPath:
             return None
 

@@ -132,7 +132,7 @@ class DependencyAnalyzer:
         total_deps = 0
         dep_counts = {}
         rdep_counts = {}
-        cross_repo = Counter()
+        cross_repo: Counter[str] = Counter()
 
         for name in repo_packages:
             deps = self.graph.get_dependencies(name)
@@ -247,7 +247,7 @@ class DependencyAnalyzer:
         unique = pkg_deps - other_deps
         return sorted(unique)
 
-    def estimate_install_size(self, package: str) -> dict[str, int]:
+    def estimate_install_size(self, package: str) -> dict:
         """
         估算安装大小（按包数量）
 
@@ -259,7 +259,7 @@ class DependencyAnalyzer:
         """
         deps = self.graph.get_dependencies(package, recursive=True)
 
-        by_repo = Counter()
+        by_repo: Counter[str] = Counter()
         for dep in deps:
             pkg = self.graph.packages.get(dep)
             if pkg:

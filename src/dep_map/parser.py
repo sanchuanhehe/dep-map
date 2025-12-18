@@ -122,7 +122,7 @@ class BashVariableContext:
         """获取变量值"""
         if name in self.variables:
             return self.variables[name]
-        return self._defaults.get(name, default)
+        return str(self._defaults.get(name, default))
 
     def set(self, name: str, value: str):
         """设置变量值"""

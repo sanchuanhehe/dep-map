@@ -167,7 +167,7 @@ class Visualizer:
     def _collect_all_dep_types(self, package: str, max_depth: int, include_reverse: bool) -> tuple:
         """收集所有类型的依赖，用不同样式区分"""
         nodes_to_show = {package}
-        edges_data = []
+        edges_data: list[dict] = []
         edge_set = set()  # 避免重复边
 
         pkg_info = self.graph.packages.get(package)
@@ -731,7 +731,7 @@ class Visualizer:
                 size = 25
                 font_size = 11
             else:
-                size = max(8, min(5 + rdep_count / 5, 20))
+                size = int(max(8, min(5 + rdep_count / 5, 20)))
                 font_size = 9
 
             node_data = {

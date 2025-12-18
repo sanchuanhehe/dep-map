@@ -217,7 +217,7 @@ class AportsScanner:
 
     def get_statistics(self) -> dict:
         """获取统计信息"""
-        repo_counts = {}
+        repo_counts: dict[str, int] = {}
         total_deps = 0
         max_deps_pkg = None
         max_deps_count = 0
