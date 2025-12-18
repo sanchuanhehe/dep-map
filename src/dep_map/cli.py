@@ -296,8 +296,9 @@ def visualize(package: str, aports: Optional[str], output: str, depth: int, fmt:
 @main.command()
 @click.option("--aports", "-a", type=click.Path(exists=True), help="aports 仓库路径")
 @click.option("--output", "-o", type=click.Path(), help="输出 HTML 文件路径")
-@click.option("--max-nodes", "-n", default=300, help="最大节点数")
-def overview(aports: Optional[str], output: Optional[str], max_nodes: int):
+@click.option("--max-nodes", "-n", default=300, help="最大节点数 (仅当不使用 --all 时)")
+@click.option("--all", "show_all", is_flag=True, help="显示所有节点（完整依赖图）")
+def overview(aports: Optional[str], output: Optional[str], max_nodes: int, show_all: bool):
     """生成完整依赖图概览"""
     graph = load_or_scan(aports)
     
@@ -305,10 +306,19 @@ def overview(aports: Optional[str], output: Optional[str], max_nodes: int):
     
     viz = Visualizer(graph)
     
-    with console.status("Generating overview..."):
-        viz.render_full_graph_html(output_path, max_nodes=max_nodes)
+    if show_all:
+        total = len(graph.packages)
+        console.print(f"[yellow]Generating complete graph with all {total} packages...[/yellow]")
+        console.print("[dim]This may take a while and the resulting file may be large.[/dim]")
+        
+        with console.status("Generating complete graph..."):
+            viz.render_complete_graph_html(output_path, title=f"Complete Alpine Dependency Graph ({total} packages)")
+    else:
+        with console.status("Generating overview..."):
+            viz.render_full_graph_html(output_path, max_nodes=max_nodes)
     
     console.print(f"[green]✓[/green] Generated {output_path}")
+    console.print(f"[dim]Open in browser: file://{os.path.abspath(output_path)}[/dim]")
 
 
 @main.command()
