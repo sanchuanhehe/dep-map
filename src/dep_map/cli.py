@@ -325,7 +325,10 @@ def visualize(package: str, aports: Optional[str], output: str, depth: int, fmt:
 @click.option("--output", "-o", type=click.Path(), help="输出 HTML 文件路径")
 @click.option("--max-nodes", "-n", default=300, help="最大节点数 (仅当不使用 --all 时)")
 @click.option("--all", "show_all", is_flag=True, help="显示所有节点（完整依赖图，可在 HTML 中过滤）")
-def overview(aports: Optional[str], output: Optional[str], max_nodes: int, show_all: bool):
+@click.option("--repo", "-r", type=click.Choice(["main", "community", "testing"]), 
+              help="只包含指定仓库的包（在生成时过滤）")
+def overview(aports: Optional[str], output: Optional[str], max_nodes: int, show_all: bool,
+             repo: Optional[str]):
     """生成完整依赖图概览
     
     生成的 HTML 文件包含交互式过滤器，可以在浏览器中动态过滤：
@@ -346,10 +349,24 @@ def overview(aports: Optional[str], output: Optional[str], max_nodes: int, show_
     
     \b
     示例：
-    dep-map overview --all -o full-graph.html   # 生成完整图
-    dep-map overview -n 500 -o top500.html      # 只取前 500 个节点
+    dep-map overview --all -o full-graph.html       # 生成完整图
+    dep-map overview --all --repo main -o main.html # 只生成 main 仓库
+    dep-map overview -n 500 -o top500.html          # 只取前 500 个节点
     """
     graph = load_or_scan(aports)
+    
+    # 如果指定了 repo，过滤图
+    if repo:
+        filtered_packages = {
+            name: pkg for name, pkg in graph.packages.items()
+            if pkg.repo == repo
+        }
+        console.print(f"[cyan]Filtering to {repo} repository: {len(filtered_packages)} packages[/cyan]")
+        
+        # 创建一个新的 graph 只包含指定仓库的包
+        from dep_map.graph import DependencyGraph
+        filtered_graph = DependencyGraph(filtered_packages)
+        graph = filtered_graph
     
     output_path = output or "dependency-overview.html"
     
@@ -357,8 +374,9 @@ def overview(aports: Optional[str], output: Optional[str], max_nodes: int, show_
     
     if show_all:
         total = len(graph.packages)
-        console.print(f"[yellow]Generating full graph with {total} packages...[/yellow]")
-        console.print("[dim]Tip: Use filters in the HTML sidebar to narrow down the view[/dim]")
+        console.print(f"[yellow]Generating graph with {total} packages...[/yellow]")
+        if not repo:
+            console.print("[dim]Tip: Use filters in the HTML sidebar to narrow down the view[/dim]")
         
         with console.status("Generating graph..."):
             viz.render_full_graph_html(

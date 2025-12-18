@@ -2189,7 +2189,7 @@ class Visualizer:
                     <label>Repository</label>
                     <select id="filter-repo">
                         <option value="">All</option>
-                        <option value="main">main</option>
+                        <option value="main" selected>main</option>
                         <option value="community">community</option>
                         <option value="testing">testing</option>
                     </select>
@@ -2286,6 +2286,9 @@ class Visualizer:
         }});
         
         let edgeFilters = {{ runtime: true, build: false, check: false }};
+        
+        // 页面加载时自动应用默认过滤器（main 仓库）
+        setTimeout(() => applyNodeFilters(), 100);
         
         function getSubtree(rootPkg) {{
             // BFS 获取所有依赖子树
